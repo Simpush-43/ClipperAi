@@ -22,7 +22,7 @@ const publicDir = path.join(projectDir, "..", "frontend", "dist");
 const config = readRuntimeConfig();
 const password = process.env.DASHBOARD_PASSWORD;
 const sessionSecret = process.env.DASHBOARD_SESSION_SECRET;
-const port = Number(process.env.API_PORT || 3001);
+const port = Number(process.env.PORT || process.env.API_PORT || 3001);
 
 if (!password || password.length < 12) throw new Error("Set DASHBOARD_PASSWORD in .env (at least 12 characters)");
 if (!sessionSecret || sessionSecret.length < 32) throw new Error("Set DASHBOARD_SESSION_SECRET in .env (at least 32 characters)");
@@ -204,6 +204,6 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(port, "127.0.0.1", () => {
+server.listen(port, "0.0.0.0", () => {
   console.log(`Clip dashboard API running at http://127.0.0.1:${port}`);
 });
