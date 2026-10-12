@@ -1,0 +1,15 @@
+GROQ_API_KEY=replace-with-your-groq-api-key
+GEMINI_API_KEY=replace-with-your-gemini-api-key
+MONGODB_URI=replace-with-your-mongodb-atlas-uri
+MONGODB_DB=clipper
+R2_ACCOUNT_ID=your-cloudflare-account-id
+R2_ACCESS_KEY_ID=your-r2-access-key-id
+R2_SECRET_ACCESS_KEY=your-r2-secret-access-key
+R2_BUCKET=your-r2-bucket-name
+DASHBOARD_PASSWORD=use-a-unique-password-at-least-12-characters
+DASHBOARD_SESSION_SECRET=use-a-random-secret-at-least-32-characters
+INSTAGRAM_USER_ID=your-instagram-professional-account-id
+INSTAGRAM_ACCESS_TOKEN=your-meta-user-access-token
+INSTAGRAM_GRAPH_VERSION=v25.0
+# PORT=3000
+# GEMINI_MODEL=gemini-2.5-flash
