@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "start": "npm run dashboard",
+    "start": "npm run build && node --env-file-if-exists=.env backend/server.js",
     "dev": "concurrently -k -n API,WEB -c green,cyan \"npm:api:dev\" \"npm:ui:dev\"",
     "api:dev": "node --watch --env-file=.env backend/server.js",
     "ui:dev": "vite --config frontend/vite.config.js --host 127.0.0.1",
