@@ -2,12 +2,14 @@ services:
   - type: web
     name: clipper
     runtime: node
-    buildCommand: npm ci && npm run build && curl -fL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o tools/yt-dlp && chmod +x tools/yt-dlp
-    startCommand: node backend/server.js
+    buildCommand: curl -fsSL https://deno.land/install.sh | DENO_INSTALL="$PWD/tools/deno" sh && tools/deno/bin/deno --version && npm ci && npm run build && curl -fL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o tools/yt-dlp && chmod +x tools/yt-dlp
+    startCommand: test -x tools/deno/bin/deno && node backend/server.js
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
+      - key: YTDLP_JS_RUNTIME
+        value: deno
       - key: DASHBOARD_PASSWORD
         sync: false
       - key: DASHBOARD_SESSION_SECRET
