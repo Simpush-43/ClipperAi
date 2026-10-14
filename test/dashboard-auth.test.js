@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createSessionToken, passwordMatches, verifySessionToken } from "../backend/src/dashboard-auth.js";
+import { createSessionToken, hashPassword, passwordMatches, verifySessionToken } from "../backend/src/dashboard-auth.js";
 
 const secret = "test-secret-long-enough-to-sign-sessions-123456";
 
@@ -17,4 +17,11 @@ test("session token is valid until its expiry and rejects tampering", () => {
 test("password comparison accepts matching values and rejects other passwords", () => {
   assert.equal(passwordMatches("correct horse", "correct horse"), true);
   assert.equal(passwordMatches("wrong horse", "correct horse"), false);
+});
+
+test("password hashing supports secure PBKDF2 verification", () => {
+  const hashedPassword = hashPassword("strong password");
+  assert.equal(passwordMatches("strong password", hashedPassword), true);
+  assert.equal(passwordMatches("wrong password", hashedPassword), false);
+  assert.equal(hashedPassword.startsWith("pbkdf2_sha256$"), true);
 });
