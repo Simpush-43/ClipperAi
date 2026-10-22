@@ -6,7 +6,7 @@ import { uploadClips } from "./storage.js";
 import { getWords } from "./transcription.js";
 import { createJobDirectories, downloadVideo, readVideoId } from "./youtube.js";
 
-export async function runPipeline(args, { onProgress = () => {} } = {}) {
+export async function runPipeline(args, { onProgress = () => {}, ownerId = "legacy-dashboard" } = {}) {
   const config = parseArgs(args);
   onProgress({ stage: "resolving", progress: 5, message: "Reading video details" });
   const videoId = await readVideoId(config.url);
@@ -41,7 +41,7 @@ export async function runPipeline(args, { onProgress = () => {} } = {}) {
     }
 
     onProgress({ stage: "uploading", progress: 88, message: "Saving clips to cloud storage" });
-    const uploaded = await uploadClips({ clips: rendered, videoId, config });
+    const uploaded = await uploadClips({ clips: rendered, videoId, config, ownerId });
     onProgress({ stage: "complete", progress: 100, message: `${uploaded.length} clips are ready`, clipCount: uploaded.length });
     console.log(`\nDone. Uploaded ${uploaded.length} clips to Cloudflare R2; metadata saved in MongoDB.`);
   } finally {

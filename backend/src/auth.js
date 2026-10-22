@@ -16,8 +16,9 @@ export function isValidEmail(value) {
 }
 
 export function validPassword(password) {
-  const value = String(password || "");
-  return value.length >= PASSWORD_MIN_LENGTH && value.length <= PASSWORD_MAX_LENGTH;
+  return typeof password === "string" &&
+    password.length >= PASSWORD_MIN_LENGTH &&
+    password.length <= PASSWORD_MAX_LENGTH;
 }
 
 export function generateSecureToken(bytes = 32) {
@@ -133,8 +134,6 @@ export function buildGoogleOAuthUrl({ clientId, redirectUri, state, codeVerifier
     ? createHash("sha256").update(codeVerifier).digest("base64url")
     : undefined;
   return oauth.generateAuthUrl({
-    access_type: "offline",
-    prompt: "consent",
     state,
     code_challenge_method: "S256",
     code_challenge: codeChallenge,

@@ -24,7 +24,7 @@ export function getRetentionCutoff(days, now = Date.now()) {
   return new Date(now - days * 24 * 60 * 60 * 1000);
 }
 
-export async function uploadClips({ clips, videoId, config }) {
+export async function uploadClips({ clips, videoId, config, ownerId = "legacy-dashboard" }) {
   const mongo = new MongoClient(config.mongoUri);
   const r2 = createR2Client(config);
   const uploaded = [];
@@ -55,6 +55,7 @@ export async function uploadClips({ clips, videoId, config }) {
       const createdAt = new Date();
       const record = {
         videoId,
+        ownerId,
         title: clip.title,
         start: clip.start,
         end: clip.end,
@@ -125,13 +126,16 @@ export async function cleanupExpiredClips(config) {
   }
 }
 
-export async function getClipPlaybackUrl({ clipId, config }) {
+export async function getClipPlaybackUrl({ clipId, ownerId, config }) {
   const mongo = new MongoClient(config.mongoUri);
   const r2 = createR2Client(config);
   try {
     await mongo.connect();
     const { ObjectId } = await import("mongodb");
-    const record = await mongo.db(config.mongoDb).collection("clips").findOne({ _id: new ObjectId(clipId), storage: "r2" });
+    const ownerQuery = ownerId === "legacy-dashboard"
+      ? { $or: [{ ownerId }, { ownerId: { $exists: false } }] }
+      : { ownerId };
+    const record = await mongo.db(config.mongoDb).collection("clips").findOne({ _id: new ObjectId(clipId), storage: "r2", ...ownerQuery });
     if (!record) throw new Error("R2 clip record not found");
 
     const expiresIn = 60 * 60;
@@ -151,12 +155,14 @@ export async function getClipPlaybackUrl({ clipId, config }) {
   }
 }
 
-export async function listClips({ config, cursor, limit = 24 }) {
+export async function listClips({ config, ownerId, cursor, limit = 24 }) {
   const mongo = new MongoClient(config.mongoUri);
   try {
     await mongo.connect();
     const collection = mongo.db(config.mongoDb).collection("clips");
-    const query = { storage: "r2" };
+    const query = ownerId === "legacy-dashboard"
+      ? { storage: "r2", $or: [{ ownerId }, { ownerId: { $exists: false } }] }
+      : { storage: "r2", ownerId };
 
     if (cursor) {
       let decoded;
@@ -167,10 +173,12 @@ export async function listClips({ config, cursor, limit = 24 }) {
       }
       const { ObjectId } = await import("mongodb");
       if (!decoded.createdAt || !ObjectId.isValid(decoded.id)) throw new Error("Invalid pagination cursor");
-      query.$or = [
-        { createdAt: { $lt: new Date(decoded.createdAt) } },
-        { createdAt: new Date(decoded.createdAt), _id: { $lt: new ObjectId(decoded.id) } },
-      ];
+      query.$and = [{
+        $or: [
+          { createdAt: { $lt: new Date(decoded.createdAt) } },
+          { createdAt: new Date(decoded.createdAt), _id: { $lt: new ObjectId(decoded.id) } },
+        ],
+      }];
     }
 
     const records = await collection.find(query)
@@ -197,7 +205,7 @@ export async function listClips({ config, cursor, limit = 24 }) {
   }
 }
 
-export async function updateClipSocial({ clipId, update, config }) {
+export async function updateClipSocial({ clipId, ownerId, update, config }) {
   const { ObjectId } = await import("mongodb");
   if (!ObjectId.isValid(clipId)) throw new Error("Invalid clip ID");
 
@@ -217,7 +225,10 @@ export async function updateClipSocial({ clipId, update, config }) {
     await mongo.connect();
     const collection = mongo.db(config.mongoDb).collection("clips");
     const postedAt = update.reviewStatus === "posted_manually" ? new Date() : null;
-    const result = await collection.updateOne({ _id: new ObjectId(clipId), storage: "r2" }, {
+    const ownerQuery = ownerId === "legacy-dashboard"
+      ? { $or: [{ ownerId }, { ownerId: { $exists: false } }] }
+      : { ownerId };
+    const result = await collection.updateOne({ _id: new ObjectId(clipId), storage: "r2", ...ownerQuery }, {
       $set: {
         caption: update.caption,
         hashtags: update.hashtags,
@@ -233,7 +244,7 @@ export async function updateClipSocial({ clipId, update, config }) {
   }
 }
 
-export async function deleteClip({ clipId, config }) {
+export async function deleteClip({ clipId, ownerId, config }) {
   const { ObjectId } = await import("mongodb");
   if (!ObjectId.isValid(clipId)) throw new Error("Invalid clip ID");
 
@@ -242,14 +253,17 @@ export async function deleteClip({ clipId, config }) {
   try {
     await mongo.connect();
     const collection = mongo.db(config.mongoDb).collection("clips");
-    const record = await collection.findOne({ _id: new ObjectId(clipId), storage: "r2" });
+    const ownerQuery = ownerId === "legacy-dashboard"
+      ? { $or: [{ ownerId }, { ownerId: { $exists: false } }] }
+      : { ownerId };
+    const record = await collection.findOne({ _id: new ObjectId(clipId), storage: "r2", ...ownerQuery });
     if (!record) return false;
 
     await r2.send(new DeleteObjectCommand({ Bucket: record.bucket, Key: record.key }));
     if (record.thumbnailKey) {
       await r2.send(new DeleteObjectCommand({ Bucket: record.bucket, Key: record.thumbnailKey }));
     }
-    const result = await collection.deleteOne({ _id: record._id, storage: "r2" });
+    const result = await collection.deleteOne({ _id: record._id, storage: "r2", ...ownerQuery });
     return result.deletedCount === 1;
   } finally {
     r2.destroy();
@@ -257,11 +271,12 @@ export async function deleteClip({ clipId, config }) {
   }
 }
 
-export async function getInstagramAccountSettings(config) {
+export async function getInstagramAccountSettings(config, ownerId = "legacy-dashboard") {
   const mongo = new MongoClient(config.mongoUri);
   try {
     await mongo.connect();
-    const saved = await mongo.db(config.mongoDb).collection("settings").findOne({ _id: "instagram" });
+    const settingsId = ownerId === "legacy-dashboard" ? "instagram" : `instagram:${ownerId}`;
+    const saved = await mongo.db(config.mongoDb).collection("settings").findOne({ _id: settingsId });
     return {
       userId: saved?.userId || config.instagramUserId || "",
       tokenConfigured: Boolean(config.instagramAccessToken),
@@ -271,7 +286,7 @@ export async function getInstagramAccountSettings(config) {
   }
 }
 
-export async function saveInstagramAccountId({ userId, config }) {
+export async function saveInstagramAccountId({ userId, ownerId = "legacy-dashboard", config }) {
   const normalizedId = String(userId || "").trim();
   if (!/^\d{5,30}$/.test(normalizedId)) throw new Error("Enter a valid numeric Instagram Professional Account ID");
 
@@ -279,7 +294,7 @@ export async function saveInstagramAccountId({ userId, config }) {
   try {
     await mongo.connect();
     await mongo.db(config.mongoDb).collection("settings").updateOne(
-      { _id: "instagram" },
+      { _id: ownerId === "legacy-dashboard" ? "instagram" : `instagram:${ownerId}` },
       { $set: { userId: normalizedId, updatedAt: new Date() } },
       { upsert: true },
     );
@@ -289,8 +304,9 @@ export async function saveInstagramAccountId({ userId, config }) {
   }
 }
 
-async function getInstagramUserId(database, config) {
-  const settings = await database.collection("settings").findOne({ _id: "instagram" });
+async function getInstagramUserId(database, config, ownerId) {
+  const settingsId = ownerId === "legacy-dashboard" ? "instagram" : `instagram:${ownerId}`;
+  const settings = await database.collection("settings").findOne({ _id: settingsId });
   const userId = settings?.userId || config.instagramUserId;
   if (!userId || !config.instagramAccessToken) {
     throw new Error("Save your Instagram Professional Account ID and configure the Meta access token on the backend first");
@@ -309,7 +325,7 @@ async function instagramRequest(config, endpoint, { method = "GET", body } = {})
   return data;
 }
 
-export async function createInstagramReel({ clipId, caption, config }) {
+export async function createInstagramReel({ clipId, ownerId, caption, config }) {
   if (typeof caption !== "string" || caption.length > 2200) throw new Error("Caption must be 2200 characters or fewer");
 
   const mongo = new MongoClient(config.mongoUri);
@@ -319,8 +335,11 @@ export async function createInstagramReel({ clipId, caption, config }) {
     const { ObjectId } = await import("mongodb");
     const database = mongo.db(config.mongoDb);
     const collection = database.collection("clips");
-    const instagramUserId = await getInstagramUserId(database, config);
-    const record = await collection.findOne({ _id: new ObjectId(clipId), storage: "r2" });
+    const instagramUserId = await getInstagramUserId(database, config, ownerId);
+    const ownerQuery = ownerId === "legacy-dashboard"
+      ? { $or: [{ ownerId }, { ownerId: { $exists: false } }] }
+      : { ownerId };
+    const record = await collection.findOne({ _id: new ObjectId(clipId), storage: "r2", ...ownerQuery });
     if (!record) throw new Error("Clip not found");
 
     const videoUrl = await getSignedUrl(r2, new GetObjectCommand({ Bucket: record.bucket, Key: record.key }), { expiresIn: 60 * 60 * 24 });
@@ -346,15 +365,18 @@ export async function createInstagramReel({ clipId, caption, config }) {
   }
 }
 
-export async function getInstagramReelStatus({ clipId, config }) {
+export async function getInstagramReelStatus({ clipId, ownerId, config }) {
   const mongo = new MongoClient(config.mongoUri);
   try {
     await mongo.connect();
     const { ObjectId } = await import("mongodb");
     const database = mongo.db(config.mongoDb);
     const collection = database.collection("clips");
-    await getInstagramUserId(database, config);
-    const record = await collection.findOne({ _id: new ObjectId(clipId), storage: "r2" });
+    await getInstagramUserId(database, config, ownerId);
+    const ownerQuery = ownerId === "legacy-dashboard"
+      ? { $or: [{ ownerId }, { ownerId: { $exists: false } }] }
+      : { ownerId };
+    const record = await collection.findOne({ _id: new ObjectId(clipId), storage: "r2", ...ownerQuery });
     if (!record?.instagram?.containerId) throw new Error("No Instagram Reel container found for this clip");
 
     const status = await instagramRequest(config, `${record.instagram.containerId}?fields=status_code`);
@@ -365,15 +387,18 @@ export async function getInstagramReelStatus({ clipId, config }) {
   }
 }
 
-export async function publishInstagramReel({ clipId, config }) {
+export async function publishInstagramReel({ clipId, ownerId, config }) {
   const mongo = new MongoClient(config.mongoUri);
   try {
     await mongo.connect();
     const { ObjectId } = await import("mongodb");
     const database = mongo.db(config.mongoDb);
     const collection = database.collection("clips");
-    const instagramUserId = await getInstagramUserId(database, config);
-    const record = await collection.findOne({ _id: new ObjectId(clipId), storage: "r2" });
+    const instagramUserId = await getInstagramUserId(database, config, ownerId);
+    const ownerQuery = ownerId === "legacy-dashboard"
+      ? { $or: [{ ownerId }, { ownerId: { $exists: false } }] }
+      : { ownerId };
+    const record = await collection.findOne({ _id: new ObjectId(clipId), storage: "r2", ...ownerQuery });
     if (!record?.instagram?.containerId) throw new Error("Create a Reel container first");
     if (record.instagram.status !== "FINISHED") throw new Error(`Reel is not ready to publish (status: ${record.instagram.status})`);
 

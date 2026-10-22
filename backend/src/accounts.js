@@ -2,7 +2,6 @@ import { MongoClient, ObjectId } from "mongodb";
 import { OAuth2Client } from "google-auth-library";
 import {
   buildPasswordResetEmail,
-  buildVerificationEmail,
   createSessionToken,
   decodeSessionToken,
   generateSecureToken,
@@ -10,8 +9,8 @@ import {
   hashToken,
   isValidEmail,
   normalizeEmail,
-  sendTransactionalEmail,
   validPassword,
+  verifySessionToken,
   verifyPassword,
 } from "./auth.js";
 
@@ -19,7 +18,7 @@ export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 export function sanitizeUser(user) {
   if (!user) return null;
-  const { passwordHash, verificationTokenHash, resetTokenHash, ...rest } = user;
+  const { passwordHash, verificationTokenHash, verificationExpiresAt, resetTokenHash, resetExpiresAt, googleSub, ...rest } = user;
   return {
     ...rest,
     id: rest._id ? rest._id.toString() : rest.id,
@@ -50,13 +49,16 @@ export async function getUserByEmail(config, email) {
   }
 }
 
-export async function createAccount({ config, email, password, name = "", sessionStore, secret, appBaseUrl = process.env.APP_BASE_URL || "http://localhost:5173" }) {
+export async function createAccount({ config, email, password, name = "", sessionStore, secret }) {
   const normalizedEmail = normalizeEmail(email);
   if (!isValidEmail(normalizedEmail)) {
     return { ok: false, status: 400, error: "Enter a valid email address." };
   }
   if (!validPassword(password)) {
     return { ok: false, status: 400, error: "Use a password with at least 12 characters." };
+  }
+  if (typeof name !== "string" || !name.trim() || name.trim().length > 100) {
+    return { ok: false, status: 400, error: "Enter a name with 100 characters or fewer." };
   }
 
   const mongo = new MongoClient(config.mongoUri);
@@ -68,34 +70,38 @@ export async function createAccount({ config, email, password, name = "", sessio
       return { ok: false, status: 409, error: "An account with that email already exists." };
     }
 
-    const verificationToken = generateSecureToken(32);
     const now = new Date();
     const entity = {
       _id: new ObjectId(),
       email: normalizedEmail,
-      name: String(name || "").trim() || "Clipper user",
+      name: String(name || "").trim().slice(0, 100) || "Clipper user",
       passwordHash: await hashPassword(password),
       emailVerified: false,
       status: "active",
       authProviders: { password: true, google: false },
       createdAt: now,
       updatedAt: now,
-      verificationTokenHash: hashToken(verificationToken),
-      verificationExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
+      verificationTokenHash: null,
+      verificationExpiresAt: null,
       resetTokenHash: null,
       resetExpiresAt: null,
     };
 
-    await users.insertOne(entity);
-
-    const response = { ok: true, user: sanitizeUser(entity), requiresVerification: true };
-    const transport = config.smtpHost && config.emailFrom;
-    if (transport) {
-      const verificationUrl = `${appBaseUrl.replace(/\/$/, "")}/verify-email?token=${encodeURIComponent(verificationToken)}`;
-      const emailContent = buildVerificationEmail({ name: entity.name, url: verificationUrl });
-      await sendTransactionalEmail({ to: entity.email, subject: emailContent.subject, html: emailContent.html, text: emailContent.text, config });
+    try {
+      await users.insertOne(entity);
+    } catch (error) {
+      if (error.code === 11000) return { ok: false, status: 409, error: "An account with that email already exists." };
+      throw error;
     }
-    return response;
+
+    const session = createSessionRecord({ secret, user: entity, sessionStore });
+    return {
+      ok: true,
+      user: sanitizeUser(entity),
+      token: session.token,
+      sessionId: session.sessionId,
+      expiresAt: session.expiresAt,
+    };
   } finally {
     await mongo.close();
   }
@@ -106,7 +112,7 @@ export async function loginWithPassword({ config, email, password, sessionStore,
   if (!isValidEmail(normalizedEmail)) {
     return { ok: false, status: 400, error: "Enter a valid email address." };
   }
-  if (!password || !String(password).trim()) {
+  if (typeof password !== "string" || !password.trim()) {
     return { ok: false, status: 400, error: "Enter your password." };
   }
 
@@ -123,12 +129,8 @@ export async function loginWithPassword({ config, email, password, sessionStore,
       return { ok: false, status: 401, error: "Invalid email or password." };
     }
     if (user.status === "disabled") {
-      return { ok: false, status: 403, error: "This account has been disabled." };
+      return { ok: false, status: 401, error: "Invalid email or password." };
     }
-    if (!user.emailVerified) {
-      return { ok: false, status: 403, error: "Verify your email address before signing in." };
-    }
-
     const session = createSessionRecord({ secret, user, sessionStore });
     const updated = {
       ...user,
@@ -232,18 +234,21 @@ export async function resetPassword({ config, token, password }) {
         updatedAt: new Date(),
       },
     });
-    return { ok: true, message: "Your password has been reset." };
+    return { ok: true, message: "Your password has been reset.", userId: user._id.toString() };
   } finally {
     await mongo.close();
   }
 }
 
 export async function resolveSessionUser({ config, sessionStore, secret, token }) {
-  if (!token || typeof token !== "string") return null;
+  if (!verifySessionToken(token, secret)) return null;
   const payload = decodeSessionToken(token);
   if (!payload || !payload.sid) return null;
   const session = sessionStore.get(payload.sid);
-  if (!session) return null;
+  if (!session || session.expiresAt <= new Date()) {
+    sessionStore.delete(payload.sid);
+    return null;
+  }
 
   const mongo = new MongoClient(config.mongoUri);
   try {
@@ -252,14 +257,15 @@ export async function resolveSessionUser({ config, sessionStore, secret, token }
     const user = await users.findOne({ _id: new ObjectId(session.userId) });
     if (!user || user.status === "disabled") return null;
     return sanitizeUser(user);
-  } catch {
-    return null;
+  } catch (error) {
+    console.error("Unable to restore account session:", error.name);
+    throw error;
   } finally {
     await mongo.close();
   }
 }
 
-export async function createGoogleSession({ config, sessionStore, secret, idToken, googleClientId }) {
+export async function createGoogleSession({ config, sessionStore, secret, idToken, googleClientId, linkUserId = null }) {
   if (!googleClientId) {
     return { ok: false, status: 400, error: "Google sign-in is not configured." };
   }
@@ -268,7 +274,7 @@ export async function createGoogleSession({ config, sessionStore, secret, idToke
   try {
     const ticket = await client.verifyIdToken({ idToken, audience: googleClientId });
     const payload = ticket.getPayload();
-    if (!payload || !payload.email) {
+    if (!payload?.sub || !payload.email || payload.email_verified !== true) {
       return { ok: false, status: 400, error: "Google account could not be verified." };
     }
 
@@ -278,24 +284,40 @@ export async function createGoogleSession({ config, sessionStore, secret, idToke
       await mongo.connect();
       const users = mongo.db(config.mongoDb).collection("users");
       const now = new Date();
-      const existing = await users.findOne({ email: normalizedEmail });
-      if (existing) {
-        await users.updateOne({ _id: existing._id }, {
+      let user = linkUserId
+        ? await users.findOne({ _id: new ObjectId(linkUserId), status: { $ne: "disabled" } })
+        : await users.findOne({ googleSub: payload.sub });
+      if (linkUserId) {
+        if (!user || user.email !== normalizedEmail || (user.googleSub && user.googleSub !== payload.sub)) {
+          return { ok: false, status: 409, error: "This Google account cannot be linked to the signed-in account." };
+        }
+        const linkedAccount = await users.findOne({ googleSub: payload.sub, _id: { $ne: user._id } });
+        if (linkedAccount) {
+          return { ok: false, status: 409, error: "This Google account is already connected to another account." };
+        }
+        await users.updateOne({ _id: user._id }, {
           $set: {
-            name: existing.name || payload.name || "Google user",
+            googleSub: payload.sub,
             emailVerified: true,
-            authProviders: { ...existing.authProviders, google: true },
+            authProviders: { ...user.authProviders, google: true },
             updatedAt: now,
           },
         });
+        user = { ...user, googleSub: payload.sub, emailVerified: true, authProviders: { ...user.authProviders, google: true }, updatedAt: now };
       }
+      if (!user) {
+        const emailOwner = await users.findOne({ email: normalizedEmail });
+        if (emailOwner) {
+          return { ok: false, status: 409, error: "This email already has an account. Sign in with that account before connecting Google." };
+        }
 
-      const user = existing || {
+        user = {
         _id: new ObjectId(),
         email: normalizedEmail,
         name: payload.name || "Google user",
         passwordHash: null,
         emailVerified: true,
+        googleSub: payload.sub,
         status: "active",
         authProviders: { password: false, google: true },
         createdAt: now,
@@ -304,23 +326,25 @@ export async function createGoogleSession({ config, sessionStore, secret, idToke
         verificationExpiresAt: null,
         resetTokenHash: null,
         resetExpiresAt: null,
-      };
-
-      if (!existing) {
+        };
         await users.insertOne(user);
       }
 
+      if (user.status === "disabled") {
+        return { ok: false, status: 401, error: "Google sign-in failed. Please try again." };
+      }
       const session = createSessionRecord({ secret, user, sessionStore });
       return {
         ok: true,
-        user: sanitizeUser({ ...user, emailVerified: true }),
+        user: sanitizeUser(user),
         token: session.token,
         sessionId: session.sessionId,
       };
     } finally {
       await mongo.close();
     }
-  } catch {
+  } catch (error) {
+    console.error("Google authentication failed:", error.name);
     return { ok: false, status: 401, error: "Google sign-in failed. Please try again." };
   }
 }

@@ -33,9 +33,7 @@ export function Login({ onLogin }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name, email, password }),
         });
-        setInfo(result.requiresVerification ? "Account created. Check your email to verify your account before signing in." : "Account created successfully.");
-        setMode("login");
-        setPassword("");
+        onLogin(result.user);
         return;
       }
 
@@ -76,7 +74,7 @@ export function Login({ onLogin }) {
 
         {mode === "signup" && (
           <label htmlFor="name">Full name
-            <input id="name" type="text" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Alex Morgan" />
+            <input id="name" type="text" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Alex Morgan" required maxLength={100} />
           </label>
         )}
 
@@ -91,6 +89,8 @@ export function Login({ onLogin }) {
         )}
 
         <button className="button button-dark" disabled={busy}>{busy ? <LoaderCircle className="spin" size={16} /> : title}<ArrowRight size={16} /></button>
+        {mode === "login" && <button type="button" className="google-button" onClick={() => window.location.assign("/api/auth/google")}><span className="google-mark">G</span>Continue with Google</button>}
+        {mode === "login" && new URLSearchParams(window.location.search).has("authError") && <p className="error-text">Google sign-in did not complete. Please try again.</p>}
         {error && <p className="error-text">{error}</p>}
         {info && <p className="success-text">{info}</p>}
       </form>

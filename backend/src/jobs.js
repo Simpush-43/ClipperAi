@@ -18,11 +18,12 @@ export function validateYouTubeUrl(value) {
   return url.toString();
 }
 
-export function createJob({ url, maxClips }) {
+export function createJob({ url, maxClips, ownerId = "legacy-dashboard" }) {
   if (activeJobId) throw new Error("Another video is already processing. Please wait for it to finish.");
   const id = randomUUID();
   const job = {
     id,
+    ownerId,
     url,
     maxClips,
     status: "queued",
@@ -40,6 +41,7 @@ export function createJob({ url, maxClips }) {
     job.updatedAt = new Date().toISOString();
     try {
       await runPipeline([url, "--max", String(maxClips)], {
+        ownerId,
         onProgress(update) {
           Object.assign(job, update, { updatedAt: new Date().toISOString() });
           if (update.stage === "complete") job.status = "complete";
@@ -68,7 +70,7 @@ function publicJob(job) {
   return { id, status, stage, progress, message, clipCount, createdAt, updatedAt };
 }
 
-export function getJob(id) {
+export function getJob(id, ownerId) {
   const job = jobs.get(id);
-  return job ? publicJob(job) : null;
+  return job && job.ownerId === ownerId ? publicJob(job) : null;
 }
