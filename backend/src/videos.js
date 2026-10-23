@@ -780,6 +780,7 @@ async function processJob(config) {
   let job;
   let record;
   let heartbeatTimer;
+  let processingStage = "claim";
   try {
     await mongo.connect();
     const database = mongo.db(config.mongoDb);
@@ -808,18 +809,23 @@ async function processJob(config) {
       return;
     }
     await collection.updateOne({ _id: record._id, ownerId: record.ownerId }, { $set: { status: "processing", error: null, updatedAt: new Date() } });
+    processingStage = "download";
     workDir = await fsp.mkdtemp(path.join(os.tmpdir(), "clipper-video-"));
     const inputPath = path.join(workDir, "source");
     const source = await r2.send(new GetObjectCommand({ Bucket: config.r2Bucket, Key: record.sourceKey }));
     await pipeline(source.Body, fs.createWriteStream(inputPath));
+    processingStage = "probe";
     const metadata = await inspectMedia(inputPath, config);
+    processingStage = "transcode";
     const output = await transcode(config, inputPath, workDir, metadata, record);
+    processingStage = "inspect_hls";
     for (const variant of output.hlsVariants) {
       const firstSegment = path.join(variant.localDir, "segment_000.ts");
       const variantMetadata = await inspectMedia(firstSegment, config);
       variant.codecs = hlsCodecString(variantMetadata);
     }
 
+    processingStage = "upload_renditions";
     const mp4Key = `${record.assetPrefix}/mp4/video.mp4`;
     await uploadFile(r2, config, mp4Key, output.mp4Path, "video/mp4");
     const assets = {
@@ -858,6 +864,7 @@ async function processJob(config) {
       assets.hls = { masterKey, variants };
     }
 
+    processingStage = "persist_result";
     const formats = ["mp4", ...(assets.hls ? ["hls"] : [])];
     const status = output.failedProfiles.length ? "partially_ready" : "ready";
     const now = new Date();
@@ -886,7 +893,16 @@ async function processJob(config) {
         { _id: new ObjectId(job.videoId), ownerId: job.ownerId, status: { $ne: "deleted" } },
         { $set: { status: "failed", error: message, updatedAt: now } },
       ).catch((updateError) => console.error("Unable to persist video failure:", updateError.message));
-      console.error("Video processing failed for job:", job.videoId, error.name);
+      const diagnostic = String(error.message || "Unknown processing error")
+        .replace(/https?:\/\/[^\s"'<>]+/gi, "[url]")
+        .replace(/[\r\n\t]+/g, " ")
+        .slice(0, 1500);
+      console.error("Video processing failed:", JSON.stringify({
+        videoId: job.videoId,
+        stage: processingStage,
+        errorName: error.name || "Error",
+        message: diagnostic,
+      }));
     }
   } finally {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
