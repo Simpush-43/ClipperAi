@@ -7,7 +7,7 @@ import ffprobeStatic from "ffprobe-static"
 export const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const ytDlpPath = path.join(projectDir, "tools", process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
 export const ffmpegPath = FFMPEG;
-export const ffprobeStatic = ffprobeStatic.path;
+export const ffprobePath = ffprobeStatic.path;
 export const chunkSeconds = 600;
 
 function positiveNumber(name, fallback) {
