@@ -91,7 +91,7 @@ test("FFprobe and FFmpeg produce a playable MP4 and HLS rendition for a small so
       "-f", "lavfi", "-i", "testsrc=size=320x180:rate=24",
       "-t", "1", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", inputPath,
     ]);
-    const config = { ffprobePath: "", videoMaxDurationSeconds: 30, videoProcessTimeoutMs: 60_000, videoFfmpegThreads: 1 };
+    const config = { ffprobePath: "path-to-ffprobe", videoMaxDurationSeconds: 30, videoProcessTimeoutMs: 60_000, videoFfmpegThreads: 1 };
     const metadata = await inspectMedia(inputPath, config);
     assert.equal(metadata.width, 320);
     assert.equal(metadata.height, 180);

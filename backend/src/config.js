@@ -2,10 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import FFMPEG from "ffmpeg-static";
+import ffprobeStatic from "ffprobe-static"
 
 export const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const ytDlpPath = path.join(projectDir, "tools", process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
 export const ffmpegPath = FFMPEG;
+export const ffprobeStatic = ffprobeStatic.path;
 export const chunkSeconds = 600;
 
 function positiveNumber(name, fallback) {
@@ -69,7 +71,7 @@ export function readRuntimeConfig() {
     videoMaxPendingPerUser: Math.max(1, Math.floor(positiveNumber("VIDEO_MAX_PENDING_PER_USER", 3))),
     videoFfmpegThreads: Math.max(1, Math.floor(positiveNumber("VIDEO_FFMPEG_THREADS", 2))),
     videoUploadPartBytes,
-    ffprobePath: FFPROBE_PATH || "",
+    ffprobePath: FFPROBE_PATH && FFPROBE_PATH !== "path-to-ffprobe" ? FFPROBE_PATH : ffprobeStatic.path,
     smtpHost: SMTP_HOST || "",
     smtpPort: SMTP_PORT || "587",
     smtpSecure: SMTP_SECURE === "true" || SMTP_SECURE === "1",

@@ -33,6 +33,7 @@ const VIDEO_TYPES = new Map([
 ]);
 const SHARE_ID_BYTES = 32;
 const PROFILE_HEIGHTS = [1080, 720, 480];
+let warnedAboutFfprobePath = false;
 
 function createMongo(config) {
   return new MongoClient(config.mongoUri);
@@ -659,8 +660,19 @@ function run(command, args, timeoutMs) {
   });
 }
 
+function resolveFfprobePath(config) {
+  const configuredPath = config.ffprobePath?.trim();
+  if (configuredPath && fs.existsSync(configuredPath)) return configuredPath;
+  if (configuredPath && !warnedAboutFfprobePath) {
+    console.warn("FFPROBE_PATH does not point to an existing file; using the bundled ffprobe-static binary.");
+    warnedAboutFfprobePath = true;
+  }
+  if (ffprobe.path && fs.existsSync(ffprobe.path)) return ffprobe.path;
+  throw new Error("FFprobe is unavailable. Remove the invalid FFPROBE_PATH setting or install a supported ffprobe binary.");
+}
+
 export async function inspectMedia(filePath, config) {
-  const { stdout } = await run(config.ffprobePath || ffprobe.path, [
+  const { stdout } = await run(resolveFfprobePath(config), [
     "-v", "error",
     "-show_streams", "-show_format",
     "-of", "json", filePath,

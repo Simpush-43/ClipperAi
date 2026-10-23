@@ -23,6 +23,7 @@ VIDEO_WORKER_CONCURRENCY=1
 VIDEO_MAX_PENDING_PER_USER=3
 VIDEO_FFMPEG_THREADS=2
 VIDEO_UPLOAD_PART_BYTES=16777216
-# FFPROBE_PATH=path-to-ffprobe
+# Optional only when ffprobe is installed at a custom executable path.
+# FFPROBE_PATH=/absolute/path/to/ffprobe
 # PORT=3000
 # GEMINI_MODEL=gemini-2.5-flash
